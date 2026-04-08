@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>講義音声ノートAI</title>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      background: #f5f7fb;
+      color: #333;
+    }
+    .container {
+      max-width: 480px;
+      margin: auto;
+      padding: 16px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 20px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+    label {
+      font-size: 14px;
+      font-weight: bold;
+      display: block;
+      margin-bottom: 6px;
+    }
+    input, button {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #4f46e5;
+      color: white;
+      border: none;
+      margin-top: 10px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .result-box {
+      background: #fafafa;
+      padding: 10px;
+      border-radius: 8px;
+      min-height: 60px;
+      white-space: pre-wrap;
+    }
+    .copy-btn {
+      margin-top: 6px;
+      font-size: 12px;
+      background: #e5e7eb;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>講義音声ノートAI</h1>
+
+    <!-- APIキー -->
+    <div class="card">
+      <label>APIキー（Gemini）</label>
+      <input type="password" id="apiKey" placeholder="APIキーを入力"/>
+      <button onclick="saveApiKey()">保存</button>
+    </div>
+
+    <!-- 入力 -->
+    <div class="card">
+      <label>講義名（任意）</label>
+      <input type="text" id="lectureName" placeholder="例：経済学入門"/>
+
+      <label style="margin-top:10px;">音声ファイル</label>
+      <input type="file" id="audioFile" accept=".mp3,.wav,.m4a"/>
+
+      <button id="runBtn" onclick="runApp()">実行</button>
+    </div>
+
+    <!-- 結果 -->
+    <div class="card">
+      <div class="result">
+        <label>文字起こし</label>
+        <div id="transcript" class="result-box"></div>
+        <button class="copy-btn" onclick="copyText('transcript')">コピー</button>
+      </div>
+
+      <div class="result">
+        <label>概要（3行）</label>
+        <div id="summary" class="result-box"></div>
+        <button class="copy-btn" onclick="copyText('summary')">コピー</button>
+      </div>
+
+      <div class="result">
+        <label>要点（3〜5個）</label>
+        <div id="points" class="result-box"></div>
+        <button class="copy-btn" onclick="copyText('points')">コピー</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // APIキー復元
+    window.onload = () => {
+      const savedKey = localStorage.getItem("apiKey");
+      if (savedKey) {
+        document.getElementById("apiKey").value = savedKey;
+      }
+    };
+
+    function saveApiKey() {
+      const key = document.getElementById("apiKey").value;
+      if (!key) return alert("APIキーを入力してください");
+      localStorage.setItem("apiKey", key);
+      alert("保存しました");
+    }
+
+    function copyText(id) {
+      const text = document.getElementById(id).innerText;
+      navigator.clipboard.writeText(text);
+      alert("コピーしました");
+    }
+
+    function toBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+      });
+    }
+
+    async function runApp() {
+      const apiKey = document.getElementById("apiKey").value;
+      const file = document.getElementById("audioFile").files[0];
+      const btn = document.getElementById("runBtn");
+
+      if (!apiKey) return alert("APIキーを入力してください");
+      if (!file) return alert("音声ファイルを選択してください");
+
+      btn.innerText = "文字起こし中...";
+      btn.disabled = true;
+
+      try {
+        const base64 = await toBase64(file);
+        const mimeType = file.type || "audio/mpeg";
+
+        // ===== ① 文字起こし =====
+        const res1 = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: "この音声の文字起こしをしてください。" },
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: base64.split(",")[1]
+                    }
+                  }
+                ]
+              }]
+            })
+          }
+        );
+
+        const data1 = await res1.json();
+        if (!res1.ok) throw new Error(data1.error?.message);
+
+        const transcript =
+          data1.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        document.getElementById("transcript").innerText = transcript;
+
+        // ===== ② 要約生成 =====
+        btn.innerText = "要約生成中...";
+
+        const res2 = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{
+                  text: `以下の文章をもとに、きっちり3行の概要と、3〜5個の箇条書きの要点を作成してください。
+出力は【概要】と【要点】という見出しで分けてください。
+
+${transcript}`
+                }]
+              }]
+            })
+          }
+        );
+
+        const data2 = await res2.json();
+        if (!res2.ok) throw new Error(data2.error?.message);
+
+        const resultText =
+          data2.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+        // ===== 分割処理 =====
+        let summary = "";
+        let points = "";
+
+        if (resultText.includes("【要点】")) {
+          const parts = resultText.split("【要点】");
+          summary = parts[0].replace("【概要】", "").trim();
+          points = parts[1].trim();
+        } else {
+          summary = resultText;
+        }
+
+        document.getElementById("summary").innerText = summary;
+        document.getElementById("points").innerText = points;
+
+      } catch (err) {
+        console.error("エラー:", err);
+        alert("エラー: " + err.message);
+      } finally {
+        btn.innerText = "実行";
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
